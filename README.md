@@ -4,6 +4,6 @@
 
 * export JAVA_HOME=/usr/lib/jvm/java-8-amazon-corretto
 
-* cd /ICBM-Classic
+* cd /path/to/ICBM-Classic
 
 * ./gradlew build
