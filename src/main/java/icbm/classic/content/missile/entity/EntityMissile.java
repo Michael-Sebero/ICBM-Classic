@@ -33,10 +33,13 @@ import net.minecraft.util.EnumFacing;
 import net.minecraft.util.EnumHand;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.AxisAlignedBB;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.RayTraceResult;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import net.minecraftforge.common.ForgeChunkManager;
+import net.minecraftforge.common.ForgeChunkManager.Ticket;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.capabilities.Capability;
 import net.minecraftforge.fml.common.network.ByteBufUtils;
@@ -68,10 +71,15 @@ public abstract class EntityMissile<E extends EntityMissile<E>> extends EntityPr
 
     protected boolean syncClient = false;
 
+    // Chunk loading fields
+    private Ticket chunkTicket;
+    private ChunkPos lastChunkPos;
+
     public EntityMissile(World world)
     {
         super(world);
         this.hasHealth = true;
+        initChunkLoading();
     }
 
     @Override
@@ -104,6 +112,8 @@ public abstract class EntityMissile<E extends EntityMissile<E>> extends EntityPr
     @Override
     public void onUpdate() {
         super.onUpdate();
+
+        updateChunkLoading();
 
         if(syncClient) {
             this.syncClient = false;
@@ -181,6 +191,7 @@ public abstract class EntityMissile<E extends EntityMissile<E>> extends EntityPr
         if (!world.isRemote)
         {
             RadarRegistry.remove(this);
+            releaseChunkLoading();
         }
 
         super.setDead();
@@ -287,6 +298,7 @@ public abstract class EntityMissile<E extends EntityMissile<E>> extends EntityPr
     }
 
     protected void actionOnImpact(RayTraceResult impactLocation) {
+        releaseChunkLoading();
         this.destroy();
     }
 
@@ -361,6 +373,52 @@ public abstract class EntityMissile<E extends EntityMissile<E>> extends EntityPr
         super.writeEntityToNBT(nbt);
         SAVE_LOGIC.save(this, nbt);
     }
+    
+    // CHUNK LOADING METHODS
+
+    private void initChunkLoading() {
+        if (!world.isRemote && ICBMClassic.INSTANCE != null) {
+            chunkTicket = ForgeChunkManager.requestTicket(ICBMClassic.INSTANCE, world, ForgeChunkManager.Type.ENTITY);
+            if (chunkTicket != null) {
+                chunkTicket.bindEntity(this);
+                updateChunkLoading();
+            }
+        }
+    }
+
+    private void updateChunkLoading() {
+        if (world.isRemote || chunkTicket == null) return;
+
+        ChunkPos currentChunk = new ChunkPos(getPosition());
+        if (lastChunkPos != null && lastChunkPos.equals(currentChunk)) return;
+
+        // Unload old chunks
+        if (lastChunkPos != null) {
+            for (int x = -2; x <= 2; x++) {
+                for (int z = -2; z <= 2; z++) {
+                    ForgeChunkManager.unforceChunk(chunkTicket, new ChunkPos(lastChunkPos.x + x, lastChunkPos.z + z));
+                }
+            }
+        }
+
+        // Load new chunks (5x5 area)
+        for (int x = -2; x <= 2; x++) {
+            for (int z = -2; z <= 2; z++) {
+                ForgeChunkManager.forceChunk(chunkTicket, new ChunkPos(currentChunk.x + x, currentChunk.z + z));
+            }
+        }
+
+        lastChunkPos = currentChunk;
+    }
+
+    private void releaseChunkLoading() {
+        if (chunkTicket != null) {
+            ForgeChunkManager.releaseTicket(chunkTicket);
+            chunkTicket = null;
+            lastChunkPos = null;
+        }
+    }
+
 
     private static final NbtSaveHandler<EntityMissile> SAVE_LOGIC = new NbtSaveHandler<EntityMissile>()
         .mainRoot()
